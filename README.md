@@ -52,3 +52,15 @@ message instead of posting a new one.
 - **Hosting**: this needs to run continuously somewhere (a small VPS,
   Railway, Render, a Raspberry Pi, etc.) — running it only on your own
   machine means it stops updating when your machine is off.
+
+## 4. Optional: CapitalRift status streamer (addition)
+
+An optional addition fetches and streams data from https://capitalrift.com/api/access/status and edits a second message in the same channel so it does not override the Babylon embed.
+
+Environment variables (add to your .env):
+
+- CAPITAL_RIFT_ENABLED=true  # enable the CapitalRift polling (default: false)
+- CAPITAL_RIFT_URL=https://capitalrift.com/api/access/status
+- CAPITAL_RIFT_REFRESH_SECONDS=57  # poll interval in seconds (default: 57)
+
+When enabled, the bot will create / edit a second message in the configured channel with CapitalRift status and poll it every CAPITAL_RIFT_REFRESH_SECONDS (default 57s). This is additive — it will not replace the Babylon ticker message.
