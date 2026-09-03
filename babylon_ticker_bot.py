@@ -71,20 +71,113 @@ def build_babylon_embed(companies: list) -> Embed:
     embed.set_footer(text=f"Updated every {REFRESH_SECONDS}s")
     return embed
 
+def _find_commodities(data: dict, symbols: set) -> dict:
+    """Try to locate commodity entries matching symbols in a few common shapes.
+    Returns a mapping symbol -> entry (dict).
+    """
+    found = {}
+
+    # common container keys
+    for key in ("commodities", "resources", "markets", "prices", "market"):
+        val = data.get(key)
+        if isinstance(val, list):
+            for item in val:
+                if not isinstance(item, dict):
+                    continue
+                sym = (item.get("symbol") or item.get("ticker") or item.get("id") or "").upper()
+                if sym in symbols:
+                    found[sym] = item
+        elif isinstance(val, dict):
+            for sym in symbols:
+                if sym in val:
+                    found[sym] = val[sym]
+
+    # direct top-level symbol keys
+    for sym in symbols:
+        if sym in data and isinstance(data[sym], dict):
+            found[sym] = data[sym]
+
+    # shallow recursive search to catch nested dicts with symbol fields
+    def recurse(o):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if isinstance(v, dict):
+                    key_up = (k or "").upper()
+                    if key_up in symbols and key_up not in found:
+                        found[key_up] = v
+                recurse(v)
+        elif isinstance(o, list):
+            for it in o:
+                recurse(it)
+    recurse(data)
+    return found
+
+
+def _fmt_price(v):
+    try:
+        if isinstance(v, (int, float)):
+            return f"{v:,.2f}"
+        return str(v)
+    except Exception:
+        return str(v)
+
+
 def build_capitalrift_embed(status: dict) -> Embed:
     embed = Embed(title="CapitalRift Status")
     if not status:
         embed.description = "(no data)"
         return embed
-    # Render a few top-level keys cleanly
-    for k in ("status", "updated_at", "message"):  # common fields
-        if k in status:
-            embed.add_field(name=k, value=str(status[k]), inline=False)
-    # Fallback: attach full JSON if nothing matched
+
+    # playersOnline
+    po = status.get("playersOnline")
+    if po is not None:
+        embed.add_field(name="Players Online", value=str(po), inline=False)
+
+    # betaPlayers -> show top netWorth entries when available
+    bp = status.get("betaPlayers")
+    if isinstance(bp, list) and bp:
+        # sort by netWorth if present
+        players = [p for p in bp if isinstance(p, dict)]
+        players.sort(key=lambda x: x.get("netWorth") or 0, reverse=True)
+        lines = []
+        for p in players[:5]:
+            name = p.get("name") or p.get("id") or "player"
+            nw = p.get("netWorth")
+            lines.append(f"{name}: ${_fmt_price(nw)}")
+        embed.add_field(name="Top Beta Players (netWorth)", value="\n".join(lines), inline=False)
+    elif isinstance(bp, dict) and "netWorth" in bp:
+        embed.add_field(name="BetaPlayers netWorth", value=f"${_fmt_price(bp.get('netWorth'))}", inline=False)
+
+    # gdp24h
+    if "gdp24h" in status:
+        embed.add_field(name="GDP 24h", value=str(status.get("gdp24h")), inline=False)
+
+    # Commodities of interest
+    symbols = {"CNC", "ORE", "CRN", "WD", "SHT", "ONI", "PLK", "BAR", "NLS", "STR"}
+    found = _find_commodities(status, symbols)
+
+    if found:
+        for sym in ["CNC", "ORE", "CRN", "WD", "SHT", "ONI", "PLK", "BAR", "NLS", "STR"]:
+            ent = found.get(sym)
+            if not ent:
+                continue
+            # try common fields
+            price = ent.get("price") if isinstance(ent, dict) else None
+            if price is None:
+                price = ent.get("lastPrice") or ent.get("value") or ent.get("rate")
+            units = ent.get("units") or ent.get("unit") or ent.get("quantity")
+            parts = []
+            if price is not None:
+                parts.append(f"price: { _fmt_price(price) }")
+            if units is not None:
+                parts.append(f"units: {units}")
+            if parts:
+                embed.add_field(name=sym, value=", ".join(parts), inline=True)
+
+    # If nothing useful found, show a compact JSON snapshot (truncated)
     if len(embed.fields) == 0:
-        embed.description = f"```
-{json.dumps(status, indent=2)[:1900]}
-```"
+        embed.description = f"```\n{json.dumps(status, indent=2)[:1900]}\n```"
+
     embed.set_footer(text=f"Polled every {CAPITAL_RIFT_REFRESH_SECONDS}s")
     return embed
 
